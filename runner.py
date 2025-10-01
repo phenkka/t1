@@ -11,6 +11,15 @@ TARGETS = [
     {"name": "xss_r", "url": f"{BASE}/vulnerabilities/xss_r/", "param": "name", "submit": "Submit"},
 ]
 
+BROWSER_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                   "Chrome/125.0 Safari/537.36"),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate",
+}
+
 def t_plain(s): return s
 def t_url(s):   return urllib.parse.quote_plus(s)
 def t_durl(s):  return urllib.parse.quote_plus(urllib.parse.quote_plus(s))
@@ -76,47 +85,65 @@ def req_with_retry(call, retries=3, backoff=0.7):
     raise last
 
 def login(sess: requests.Session) -> None:
-    r = req_with_retry(lambda: sess.get(LOGIN_URL, timeout=20, allow_redirects=False))
+    r = req_with_retry(lambda: sess.get(LOGIN_URL, timeout=20, allow_redirects=False, headers=BROWSER_HEADERS))
     token = extract_token(r.text)
     data = {"username": USERNAME, "password": PASSWORD, "Login": "Login"}
     if token:
         data["user_token"] = token
-    req_with_retry(lambda: sess.post(LOGIN_URL, data=data, timeout=20, allow_redirects=False))
+    req_with_retry(lambda: sess.post(LOGIN_URL, data=data, timeout=20, allow_redirects=False, headers=BROWSER_HEADERS))
+
+    sess.cookies.set("security", "low")
 
 def send(sess: requests.Session, tgt: dict, payload: str, method="GET"):
     p = {tgt["param"]: payload, "Submit": tgt["submit"]}
-    hdrs = {"Referer": tgt["url"]}
+    hdrs = {**BROWSER_HEADERS, "Referer": tgt["url"]}
     if method == "GET":
         return req_with_retry(lambda: sess.get(tgt["url"], params=p, headers=hdrs, timeout=20, allow_redirects=False))
     else:
         return req_with_retry(lambda: sess.post(tgt["url"], data=p, headers=hdrs, timeout=20, allow_redirects=False))
 
-def run(wordlist_path: Path, kind: str, sess: requests.Session, out_csv: Path):
-    with wordlist_path.open("r", encoding="utf-8") as f, out_csv.open("w", newline="", encoding="utf-8") as out:
+def run(wordlist_path: Path, kind: str, sess: requests.Session, out_csv: Path) -> None:
+    with wordlist_path.open("r", encoding="utf-8") as f, \
+         out_csv.open("w", newline="", encoding="utf-8") as out:
         w = csv.writer(out)
         w.writerow(["vuln","base_payload","transform","method","status","blocked?","rtt_ms","where"])
 
-        # 0) baseline: без инъекции — должен быть 200
-        for method in ["GET","POST"]:
+        tgt = next(t for t in TARGETS if kind in t["name"])
+
+        base_value = "1" if kind == "sqli" else "hello"
+        for method in ["GET", "POST"]:
             t0 = time.time()
-            resp = send(sess, next(t for t in TARGETS if kind in t["name"]), "1", method)
-            dt = int((time.time()-t0)*1000)
-            w.writerow([kind, "BASELINE(id=1)", "none", method, resp.status_code, resp.status_code!=200, dt, resp.url])
+            resp = send(sess, tgt, base_value, method)
+            dt = int((time.time() - t0) * 1000)
+            w.writerow([
+                kind,
+                f"BASELINE({tgt['param']}={base_value})",
+                "none",
+                method,
+                resp.status_code,
+                resp.status_code != 200,
+                dt,
+                resp.headers.get("Location", "") or resp.url
+            ])
 
         payloads = [line.rstrip("\n") for line in f if line.strip()]
-        for tgt in TARGETS:
-            if (kind=="sqli" and "sqli" not in tgt["name"]) or (kind=="xss" and "xss" not in tgt["name"]):
-                continue
-            for base in payloads:
-                for tname, tfun in TRANSFORMS:
-                    variant = tfun(base)
-                    for method in ["GET","POST"]:
-                        t0 = time.time()
-                        resp = send(sess, tgt, variant, method)
-                        dt = int((time.time()-t0)*1000)
-                        blocked = (resp.status_code != 200)
-                        where = resp.headers.get("Location","") or resp.url
-                        w.writerow([tgt["name"], base, tname, method, resp.status_code, blocked, dt, where])
+        for base in payloads:
+            for tname, tfun in TRANSFORMS:
+                payload = tfun(base)
+                for method in ["GET", "POST"]:
+                    t0 = time.time()
+                    resp = send(sess, tgt, payload, method)
+                    dt = int((time.time() - t0) * 1000)
+                    w.writerow([
+                        tgt["name"],
+                        base,
+                        tname,
+                        method,
+                        resp.status_code,
+                        resp.status_code != 200,
+                        dt,
+                        resp.headers.get("Location", "") or resp.url
+                    ])
 
 def main():
     ap = argparse.ArgumentParser()
@@ -127,7 +154,7 @@ def main():
 
     s = requests.Session()
 
-    r = req_with_retry(lambda: s.get(BASE + "/", timeout=20, allow_redirects=False))
+    r = req_with_retry(lambda: s.get(BASE + "/", timeout=20, allow_redirects=False, headers=BROWSER_HEADERS))
     loc = r.headers.get("Location","").lower()
     if r.status_code in (301,302,303,307,308) and "login.php" in loc:
         login(s)
